@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed bin/skopeo
@@ -48,6 +49,72 @@ func ensureSkopeoExists() error {
 
 	fmt.Println("skopeo 初始化完成")
 	return nil
+}
+
+func compressFiles() {
+	targets := []string{"data", "image-tools", "image.txt"}
+	outputFile := "images_package.tar.gz"
+
+	// 1. 检查哪些目标确实存在
+	var existingTargets []string
+	for _, t := range targets {
+		if _, err := os.Stat(t); err == nil {
+			existingTargets = append(existingTargets, t)
+		}
+	}
+
+	if len(existingTargets) == 0 {
+		fmt.Println(">>> ❌ 错误: 没有任何有效文件可供压缩！")
+		return
+	}
+
+	// --- ⏳ 开始计时 ---
+	startTime := time.Now()
+
+	// 2. 检查系统是否安装了 pigz
+	_, err := exec.LookPath("pigz")
+	hasPigz := err == nil
+
+	if hasPigz {
+		// --- 方案 A: 使用 pigz 加速 ---
+		fmt.Printf(">>> 📦 发现 pigz，正在加速压缩: %v -> [%s]\n", existingTargets, outputFile)
+
+		tarCmd := exec.Command("tar", append([]string{"-cf", "-"}, existingTargets...)...)
+		pigzCmd := exec.Command("pigz")
+
+		outFile, _ := os.Create(outputFile)
+		defer outFile.Close()
+
+		pigzCmd.Stdin, _ = tarCmd.StdoutPipe()
+		pigzCmd.Stdout = outFile
+		pigzCmd.Stderr = os.Stderr
+
+		pigzCmd.Start()
+		tarCmd.Run()
+		if err := pigzCmd.Wait(); err != nil {
+			fmt.Printf(">>> ❌ pigz 压缩失败: %v\n", err)
+			return
+		}
+	} else {
+		// --- 方案 B: 自动降级使用标准 tar ---
+		fmt.Printf(">>> ⚠️ 未发现 pigz，已自动降级为标准 tar 压缩: %v -> [%s]\n", existingTargets, outputFile)
+
+		tarArgs := append([]string{"-czf", outputFile}, existingTargets...)
+		err := execute("tar", tarArgs...)
+		if err != nil {
+			fmt.Printf(">>> ❌ tar 压缩失败: %v\n", err)
+			return
+		}
+	}
+
+	// --- ⌛ 结束计时并打印结果 ---
+	duration := time.Since(startTime)
+
+	fmt.Println("---")
+	fmt.Printf(">>> ✅ 压缩完成！\n")
+	fmt.Printf(">>> 📂 生成文件: %s\n", outputFile)
+	fmt.Printf(">>> ⏱️  任务耗时: %v\n", duration.Round(time.Second)) // 四舍五入到秒，更直观
+	fmt.Println("---")
 }
 
 const (
@@ -105,6 +172,9 @@ func main() {
 		ns := getArg(args, 0, "k8s.io")
 		arch := getArg(args, 1, "amd64")
 		runForEachImage(func(image string) { exportFromContainerd(image, ns, arch) })
+	case "11":
+		// 直接调用，无需处理 args
+		compressFiles()
 	default:
 		fmt.Printf("无效参数: %s\n", command)
 		printUsage()
