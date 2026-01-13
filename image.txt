@@ -1,0 +1,1 @@
+docker.1ms.run/nginx:latest
