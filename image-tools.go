@@ -19,11 +19,11 @@ import (
 
 // 默认仓库地址常量，可通过命令行参数覆盖。
 const (
-	defaultSrcRegistry  = "docker.1ms.run"       // Docker Hub 代理源
+	defaultSrcRegistry  = "docker.1ms.run"             // Docker Hub 代理源
 	defaultDestRegistry = "harbor.zs.shaipower.online" // 默认目标 Harbor 仓库
-	defaultDestRepo     = "sealos.hub:5000"      // 默认目标仓库地址
-	defaultContainerdNS = "k8s.io"               // 默认 Containerd 命名空间
-	defaultArch         = "amd64"                // 默认 CPU 架构
+	defaultDestRepo     = "sealos.hub:5000"            // 默认目标仓库地址
+	defaultContainerdNS = "k8s.io"                     // 默认 Containerd 命名空间
+	defaultArch         = "amd64"                      // 默认 CPU 架构
 )
 
 const (
@@ -527,6 +527,9 @@ func runForEachImage(fn func(string)) {
 			continue
 		}
 		fn(line)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("读取文件 %s 时出错: %v", imageFile, err)
 	}
 }
 
