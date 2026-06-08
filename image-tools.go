@@ -35,8 +35,7 @@ var skopeoFS embed.FS
 
 // ensureSkopeoExists 检查 skopeo 是否可用：
 // 1. 已在 PATH 中 -> 仅确保补全配置
-// 2. PATH 中没有 -> 尝试包管理器安装
-// 3. 包管理器失败 -> 解压内嵌二进制
+// 2. PATH 中没有 -> 直接解压内嵌二进制（离线部署）
 func ensureSkopeoExists() {
 	if _, err := exec.LookPath("skopeo"); err == nil {
 		ensureShellCompletion()
@@ -44,56 +43,13 @@ func ensureSkopeoExists() {
 	}
 
 	fmt.Println(">>> 检测到 skopeo 未安装，正在自动安装...")
-
-	if tryInstallSkopeoViaPkgMgr() {
-		fmt.Println(">>> ✅ skopeo 安装成功")
-		ensureShellCompletion()
-		return
-	}
-
-	fmt.Println(">>> 包管理器安装失败，将使用内嵌 skopeo 二进制...")
+	fmt.Println(">>> 离线部署模式：将使用内嵌 skopeo 二进制...")
 	if err := installEmbeddedSkopeo(); err != nil {
 		fmt.Printf(">>> ❌ skopeo 初始化失败: %v\n请手动安装: https://github.com/containers/skopeo/blob/main/install.md\n", err)
 		os.Exit(1)
 	}
 	fmt.Println(">>> ✅ skopeo 初始化成功（内嵌版本）")
 	ensureShellCompletion()
-}
-
-// tryInstallSkopeoViaPkgMgr 依次尝试可用的包管理器，成功返回 true。
-func tryInstallSkopeoViaPkgMgr() bool {
-	type entry struct {
-		bin  string
-		args []string
-		sudo bool
-	}
-	managers := []entry{
-		{"brew", []string{"install", "skopeo"}, false},
-		{"apt-get", []string{"install", "-y", "skopeo"}, true},
-		{"dnf", []string{"install", "-y", "skopeo"}, true},
-		{"yum", []string{"install", "-y", "skopeo"}, true},
-	}
-	for _, m := range managers {
-		if _, err := exec.LookPath(m.bin); err != nil {
-			continue
-		}
-		fmt.Printf(">>> 使用 %s 安装 skopeo...\n", m.bin)
-		var cmd *exec.Cmd
-		if m.sudo {
-			cmd = exec.Command("sudo", append([]string{m.bin}, m.args...)...)
-		} else {
-			cmd = exec.Command(m.bin, m.args...)
-		}
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if cmd.Run() != nil {
-			continue
-		}
-		if _, err := exec.LookPath("skopeo"); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 // installEmbeddedSkopeo 将内嵌二进制写到 /usr/local/bin 或 ~/.local/bin。
@@ -167,33 +123,28 @@ func ensureShellCompletion() {
 }
 
 func setupBashCompletion(home string) error {
-	script, err := exec.Command("skopeo", "completion", "bash").Output()
-	if err != nil {
-		return fmt.Errorf("获取 bash 补全脚本失败: %v", err)
-	}
-	// 优先写入系统级目录
-	sysDir := "/etc/bash_completion.d"
-	if _, statErr := os.Stat(sysDir); statErr == nil {
-		cmd := exec.Command("sudo", "tee", filepath.Join(sysDir, "skopeo"))
-		cmd.Stdin = strings.NewReader(string(script))
-		cmd.Stdout = os.Stdout
-		if cmd.Run() == nil {
-			fmt.Printf(">>> ✅ bash 补全已安装到 %s/skopeo\n", sysDir)
-			return nil
-		}
-	}
-	// 降级：追加到 ~/.bashrc
+	// 通过 source <(skopeo completion bash) 方式启用补全，追加到 ~/.bashrc
 	bashrc := filepath.Join(home, ".bashrc")
-	const snippet = "\n# skopeo shell completion\nsource <(skopeo completion bash)\n"
-	if existing, _ := os.ReadFile(bashrc); !strings.Contains(string(existing), "skopeo completion bash") {
-		f, err := os.OpenFile(bashrc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return fmt.Errorf("写入 ~/.bashrc 失败: %v", err)
-		}
-		defer f.Close()
-		f.WriteString(snippet)
+	const completionCmd = "source <(skopeo completion bash)"
+	const snippet = "\n# skopeo shell completion\n" + completionCmd + "\n"
+
+	existing, _ := os.ReadFile(bashrc)
+	if strings.Contains(string(existing), completionCmd) {
+		fmt.Println(">>> ℹ️ bash 补全命令已存在于 ~/.bashrc，跳过追加")
+		return nil
 	}
-	fmt.Println(">>> ✅ bash 补全已添加到 ~/.bashrc，请执行: source ~/.bashrc")
+
+	f, err := os.OpenFile(bashrc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("写入 ~/.bashrc 失败: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(snippet); err != nil {
+		return fmt.Errorf("写入补全命令失败: %v", err)
+	}
+
+	fmt.Printf(">>> ✅ 已向 ~/.bashrc 追加补全命令: %s\n", completionCmd)
+	fmt.Println(">>> 请执行: source ~/.bashrc")
 	return nil
 }
 
